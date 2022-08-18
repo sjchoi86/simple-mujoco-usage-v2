@@ -1,12 +1,13 @@
 import os
-import time # wall-clock time
+import time
+from turtle import shape # wall-clock time
 import glfw # rendering purpose
 import cv2  # image plot
 import mujoco_py
 import numpy as np
 import matplotlib.pyplot as plt
 from screeninfo import get_monitors # get monitor size
-from util import r2w,trim_scale
+from util import r2w,trim_scale,get_colors
 
 class MuJoCoParserClass():
     def __init__(self,
@@ -375,3 +376,80 @@ class MuJoCoParserClass():
         """
         if sec > 0.0:
             time.sleep(sec)
+
+def get_env_object_names(env,prefix='obj_'):
+    """
+        Accumulate object names by assuming that the prefix is 'obj_'
+    """
+    object_names = [x for x in env.joint_names if x[:len(prefix)]==prefix]
+    return object_names
+
+def set_env_object(env,object_name='obj_box_01',object_pos=np.array([1.0,0.0,0.75]),color=None):
+    """
+        Set a single object
+    """
+    # Get address
+    qpos_addr = env.sim.model.get_joint_qpos_addr(object_name)
+    # Set position
+    env.sim.data.qpos[qpos_addr[0]]   = object_pos[0] # x
+    env.sim.data.qpos[qpos_addr[0]+1] = object_pos[1] # y
+    env.sim.data.qpos[qpos_addr[0]+2] = object_pos[2] # z
+    # Set rotation (upstraight)
+    env.sim.data.qpos[qpos_addr[0]+3:qpos_addr[1]] = [0,0,0,1] # quaternion
+    # Color
+    if color is not None:
+        idx = env.sim.model.geom_name2id(object_name)
+        env.sim.model.geom_rgba[idx,:] = color
+    
+def set_env_objects(env,object_names=['obj_box_01','obj_box_02'],object_pos_list=np.zeros((10,2)),colors=None):
+    """
+        Set multiple objects
+    """
+    for o_idx,object_name in enumerate(object_names):
+        object_pos = object_pos_list[o_idx,:]
+        if colors is not None:
+            color = colors[o_idx,:]
+        else:
+            color = None
+        set_env_object(env,object_name=object_name,object_pos=object_pos,color=color)
+        
+def put_env_objets_in_a_row(env,prefix='obj_',x_obj=-1.0,z_obj=0.0):
+    """
+        Put objects in a row with modifying colors
+    """
+    object_names      = get_env_object_names(env,prefix='obj_')
+    n_object          = len(object_names)
+    object_pos_list      = np.zeros(shape=(n_object,3))
+    object_pos_list[:,0] = x_obj
+    object_pos_list[:,1] = np.linspace(start=0,stop=(n_object-1)*0.1,num=n_object)
+    object_pos_list[:,2] = z_obj
+    set_env_objects(env,object_names=object_names,object_pos_list=object_pos_list,colors=get_colors(n_object))
+
+def get_env_object_poses(env,object_names=[]):
+    """
+        Get object poses
+    """
+    n_object    = len(object_names)
+    object_xyzs  = np.zeros(shape=(n_object,3))
+    object_quats = np.zeros(shape=(n_object,4))
+    for o_idx,object_name in enumerate(object_names):
+        qpos_addr = env.sim.model.get_joint_qpos_addr(object_name)
+        # Get position
+        x = env.sim.data.qpos[qpos_addr[0]]
+        y = env.sim.data.qpos[qpos_addr[0]+1]
+        z = env.sim.data.qpos[qpos_addr[0]+2]
+        object_xyzs[o_idx,:] = np.array([x,y,z])
+        # Set rotation (upstraight)
+        quat = env.sim.data.qpos[qpos_addr[0]+3:qpos_addr[1]]
+        # quat = quat / np.linalg.norm(quat)
+        object_quats[o_idx,:] = quat
+    return object_xyzs,object_quats
+
+def quat2r(quat):
+    '''
+    Convenience function for mju_quat2Mat.
+    '''
+    res = np.zeros(9)
+    mujoco_py.functions.mju_quat2Mat(res, quat)
+    res = res.reshape(3,3)
+    return res
