@@ -2,6 +2,9 @@ import time,torch,math,os
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial.distance import cdist
+import scipy.io as sio
+import pickle
+
 
 def pr2T(p,R):
     """ 
@@ -469,6 +472,31 @@ class NormalizerClass(object):
     def get_org_data(self,x_nzd):
         x_org = x_nzd*(self.std + self.eps) + self.mean
         return x_org
+
+    def save(self,pickle_path='test.pickle'):
+        """
+            Save
+        """
+        members = [attr for attr in dir(self) if not callable(getattr(self,attr)) and not attr.startswith("__")]
+        d = {}
+        for member in members:
+            d[member] = getattr(self, member)
+        with open(pickle_path, 'wb') as f:
+            pickle.dump(d, f, pickle.HIGHEST_PROTOCOL)
+        print ("[%s] saved."%(pickle_path))
+
+    def restore(self,pickle_path='test.pickle'):
+        """
+            Restore
+        """
+        with open(pickle_path, 'rb') as f:
+            d = pickle.load(f)
+            for key in d:
+                setattr(self,key,d[key])
+        print ("[%s] restored."%(pickle_path))
+        
+
+                
 
 def whitening(x=np.random.rand(5,2)):
     """
