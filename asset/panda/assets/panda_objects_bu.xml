@@ -1,0 +1,51 @@
+<mujocoinclude>
+  <asset>
+    <mesh file="../common_objects/meshes/can.stl" name="can_mesh"/>
+    <texture file="../textures/can.png" name="tex-can"/>
+    <material name="coke" reflectance="0.7" texrepeat="5 5" texture="tex-can" texuniform="true"/>
+  </asset>
+
+  <asset>
+    <mesh file="../common_objects/meshes/milk.stl" name="milk_mesh" scale="0.9 0.9 0.9"/>
+    <texture file="../textures/ceramic.png" name="tex-ceramic1"/>
+    <material name="ceramic" reflectance="0.5" texrepeat="1 1" texture="tex-ceramic1" texuniform="true"/>
+  </asset>
+
+  <asset>
+    <mesh file="../common_objects/meshes/bread.stl" name="bread_mesh" scale="0.8 0.8 0.8"/>
+    <texture file="../textures/bread.png" type="2d" name="tex-bread" />
+    <material name="bread" reflectance="0.7" texrepeat="15 15" texture="tex-bread" texuniform="true"/>
+  </asset>
+
+  <asset>
+    <texture file="../textures/light-wood.png" type="cube" name="light-wood" />
+    <texture file="../textures/dark-wood.png" type="cube" name="dark-wood" />
+    <texture file="../textures/brass-ambra.png" type="cube" name="metal" />
+    <material name="MatMetal" texture="metal" specular="1" shininess="0.3" rgba="0.9 0.9 0.9 1" />
+    <material name="MatDarkWood" texture="dark-wood" texrepeat="3 3" specular="0.4" shininess="0.1" />
+    <material name="MatLightWood" texture="light-wood" texrepeat="3 3" specular="0.4" shininess="0.1" />
+  </asset>
+
+  <worldbody>
+    <body>
+        <body name="object" pos="0.75 -0.25 0.85">
+            <!-- can -->
+            <geom name="coke" pos="-0.1 -0.15 0" mesh="can_mesh" type="mesh" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" material="coke" group="0" condim="4"/>
+            <!-- milk -->
+            <geom name="milk" pos="-0.1 0.15 0.33" mesh="milk_mesh" type="mesh" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" material="ceramic" group="0" condim="4"/>
+            <!-- <geom name="milk1" pos="-0.1 0.15 0.3" mesh="milk_mesh" type="mesh" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" material="ceramic" group="0" condim="4"/> -->
+            <!-- <geom name="milk2" pos="-0.1 0.15 0.6" mesh="milk_mesh" type="mesh" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" material="ceramic" group="0" condim="4"/> -->
+            <!-- <geom name="milk3" pos="-0.1 0.15 0.9" mesh="milk_mesh" type="mesh" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" material="ceramic" group="0" condim="4"/> -->
+            <!-- <geom name="milk4" pos="-0.1 0.15 1.2" mesh="milk_mesh" type="mesh" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" material="ceramic" group="0" condim="4"/> -->
+            <!-- <geom name="milk5" pos="-0.1 0.15 1.5" mesh="milk_mesh" type="mesh" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" material="ceramic" group="0" condim="4"/> -->
+            <!-- bread -->
+            <geom name="bread" pos="-0.13 0 0" mesh="bread_mesh" type="mesh" solimp="0.998 0.998 0.001" solref="0.001 1" density="50" friction="0.95 0.3 0.1"  material="bread" group="0" condim="4"/>
+        
+        </body>
+        
+        <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site"/>
+        <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site"/>
+        <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site"/>
+    </body>
+  </worldbody>
+</mujocoinclude>
