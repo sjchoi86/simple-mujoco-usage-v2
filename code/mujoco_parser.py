@@ -34,7 +34,10 @@ class MuJoCoParserClass():
         if self.VERBOSE:
             print ("[%s] Instantiated from [%s]"%(self.name,self.full_xml_path))
             print ("- Simulation timestep is [%.4f]sec and frequency is [%d]HZ"%(self.dt,self.HZ))
-            print ("- [%s] has [%d] bodies and body names are\n%s"%(self.name,self.n_body,self.body_names))
+            print ("- [%s] has [%d] bodies"%(self.name,self.n_body))
+            for b_idx in range(self.n_body):
+                body_name  = self.body_names[b_idx]
+                print (" [%02d] body name:[%s]"%(b_idx,body_name))
             print ("- [%s] has [%d] joints"%(self.name,self.n_joint))
             for j_idx in range(self.n_joint):
                 joint_name = self.joint_names[j_idx]
@@ -61,6 +64,10 @@ class MuJoCoParserClass():
                 actuator_name = self.actuator_names[a_idx]
                 print (" [%02d] actuator name:[%s] torque range:[%.2f to %.2f]"%
                 (a_idx,actuator_name,self.torque_range[a_idx,0],self.torque_range[a_idx,1]))
+            print  ("- [%s] has [%d] geometries"%(self.name,self.n_geom))
+            for g_idx in range(self.n_geom):
+                geom_name = self.geom_names[g_idx]
+                print (" [%02d] geometry name:[%s]"%(g_idx,geom_name))
 
     def _parse_xml(self):
         """
@@ -88,7 +95,9 @@ class MuJoCoParserClass():
         self.rev_joint_names = [self.joint_names[x] for x in self.rev_joint_idxs]
         self.n_rev_joint     = len(self.rev_joint_idxs)
         self.rev_qvel_idxs   = [self.sim.model.get_joint_qvel_addr(x) for x in self.rev_joint_names]
-
+        self.geom_names      = list(self.sim.model.geom_names)
+        self.n_geom          = len(self.geom_names)
+        
     def init_viewer(self,
                     TERMINATE_GLFW  = False,
                     INITIALIZE_GLFW = False,
@@ -222,6 +231,7 @@ class MuJoCoParserClass():
             plt.imshow(img)
             if title_str is not None:
                 plt.title(title_str,fontsize=title_fs)
+            plt.axis('off')
             plt.show()
 
     def step(self,ctrl=None,ctrl_idxs=None):
@@ -312,6 +322,21 @@ class MuJoCoParserClass():
         R = np.array(self.sim.data.body_xmat[self.body_name2idx(body_name)].reshape([3, 3]))
         return R
 
+    def get_p_geom(self,geom_name):
+        """
+            Get geometry position
+        """
+        p = self.sim.model.geom_pos[self.sim.model.geom_name2id(geom_name),:]
+        return p
+
+    def get_R_geom(self,geom_name):
+        """
+            Get geometry orientation
+        """
+        quat = self.sim.model.geom_quat[self.sim.model.geom_name2id(geom_name),:]
+        R = quat2r(quat)
+        return R
+
     def apply_extnal_force(self,body_name,ft):
         """
             Apply external force (6D) to body
@@ -329,6 +354,37 @@ class MuJoCoParserClass():
             mat   = np.eye(3).flatten(),
             rgba  = color,
             label = label)
+
+    def add_markers(self,pos_list,type=2,radius=0.02,color=np.array([0,0,1,1]),label_list=None):
+        """
+            Add multiple markers with the same radius and color
+        """
+        for m_idx in range(pos_list.shape[0]):
+            pos = pos_list[m_idx,:]
+            if label_list is None: # if 'label_list' is None, we simple show position
+                label = '%s'%(pos)
+            else:
+                label = label_list[m_idx]
+            self.add_marker(pos=pos,type=type,radius=radius,color=color,label=label)
+
+    def add_arrow(self,pos,uv_arrow,r_stem=0.03,len_arrow=0.3,color=np.array([1,0,0,1]),label=''):
+        """
+            Add an arrow
+        """
+        p_a = np.copy(np.array([0,0,1]))
+        p_b = np.copy(uv_arrow)
+        p_a_norm = np.linalg.norm(p_a)
+        p_b_norm = np.linalg.norm(p_b)
+        if p_a_norm > 1e-9: p_a = p_a/p_a_norm
+        if p_b_norm > 1e-9: p_b = p_b/p_b_norm
+        v = np.cross(p_a,p_b)
+        S = np.array([[0,-v[2],v[1]],[v[2],0,-v[0]],[-v[1],v[0],0]])
+        if np.linalg.norm(v) == 0:
+            R = np.eye(3,3)
+        else:
+            R = np.eye(3,3) + S + S@S*(1-np.dot(p_a,p_b))/(np.linalg.norm(v)*np.linalg.norm(v))
+        self.viewer.add_marker(pos=pos,size=np.array([r_stem,r_stem,len_arrow]),
+                               mat=R,rgba=color,type=mujoco_py.generated.const.GEOM_ARROW,label=label)
 
     def get_J_body(self,body_name):
         """
