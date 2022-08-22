@@ -7,6 +7,7 @@ import mujoco_py
 import numpy as np
 import matplotlib.pyplot as plt
 from screeninfo import get_monitors # get monitor size
+from scipy.spatial.distance import cdist
 from util import r2w,trim_scale,get_colors
 
 class MuJoCoParserClass():
@@ -471,7 +472,7 @@ def set_env_objects(env,object_names=['obj_box_01','obj_box_02'],object_pos_list
         
 def put_env_objets_in_a_row(env,prefix='obj_',x_obj=-1.0,z_obj=0.0):
     """
-        Put objects in a row with modifying colors
+        Put objects in a row (Y-axis) with modifying colors
     """
     object_names      = get_env_object_names(env,prefix='obj_')
     n_object          = len(object_names)
@@ -500,6 +501,32 @@ def get_env_object_poses(env,object_names=[]):
         # quat = quat / np.linalg.norm(quat)
         object_quats[o_idx,:] = quat
     return object_xyzs,object_quats
+
+def random_place_objects(
+    env,prefix='obj_',n_place=10,x_range=[0.3,1.0],y_range=[-0.5,0.5],z_range=[1.01,1.01],obj_min_dist=0.15):
+    """
+        Randomly place objects
+    """
+    put_env_objets_in_a_row(env,prefix=prefix,x_obj=-1.0,z_obj=0.0) # init objects
+    object_names    = get_env_object_names(env,prefix='obj_')
+    n_object        = len(object_names)
+    object_idxs     = np.random.permutation(n_object)[:n_place].astype(int)
+    object_pos_list = np.zeros((n_place,3))
+    for o_idx in range(n_place):
+        while True:
+                x = np.random.uniform(low=x_range[0],high=x_range[1])
+                y = np.random.uniform(low=y_range[0],high=y_range[1])
+                z = np.random.uniform(low=z_range[0],high=z_range[1])
+                xyz = np.array([x,y,z])
+                if o_idx >= 1:
+                    devc = cdist(xyz.reshape((-1,3)),object_pos_list[:o_idx,:].reshape((-1,3)),'euclidean')
+                    if devc.min() > obj_min_dist: break # minimum distance between objects
+                else:
+                    break
+        object_pos_list[o_idx,:] = xyz
+    object_placed_names = [object_names[object_idx] for object_idx in object_idxs]
+    set_env_objects(env,object_names=object_placed_names,object_pos_list=object_pos_list,colors=None)
+
 
 def quat2r(quat):
     '''
