@@ -421,4 +421,327 @@ class ConditionalVariationalAutoEncoderClass(nn.Module):
         plt.gca().set_aspect('equal', adjustable='box')
         plt.show() # plot latent spaces
         
-print ("Done.")
+# Gumbel-Quantizer
+class GumbelQuantizerClass(nn.Module):
+    """
+        Gumbel Quantizer
+    """
+    def __init__(self,name='GQ',K=20,z_dim=2,e_dim=2,beta=5e-4,e_min=-1.0,e_max=+1.0):
+        """
+            Initailize GQ
+        """
+        super(GumbelQuantizerClass,self).__init__()
+        self.K     = K
+        self.z_dim = z_dim
+        self.e_dim = e_dim
+        self.beta  = beta
+        self.e_min = e_min
+        self.e_max = e_max
+        # Define projection
+        self.projection = nn.Linear(self.z_dim,self.K)
+        nn.init.normal_(self.projection.weight,mean=0.0,std=1.0)
+        nn.init.zeros_(self.projection.bias)
+        # Define codebook
+        self.codebook = nn.Embedding(self.K,embedding_dim=self.e_dim) # [K x e_dim]
+        self.codebook.weight.data.uniform_(self.e_min,self.e_max)
+        
+    def forward(self,z_e,tau=1.0,ONE_HOT=False):
+        """
+            Forward
+            - 'gumbel_softmax' becomes 'onehot' as 'tau' becomes 0 or 'self.training' is False
+            - z_e:     output of the encoder
+            - tau:     temperature
+            - ONE_HOT: make output onehot
+        """
+        logits       = self.projection(z_e)
+        soft_one_hot = F.gumbel_softmax(logits,tau=tau,dim=1,hard=ONE_HOT)
+        z_q          = torch.matmul(soft_one_hot,self.codebook.weight)
+        # Loss
+        qy   = F.softmax(logits,dim=1)
+        # loss = self.beta * torch.sum(qy * torch.log(qy*self.K + 1e-10),dim=1).mean()
+        loss = self.beta*torch.sum(qy*torch.log(qy + 1e-6),dim=1).mean() # minimize negative entropy -> maximize entropy
+        return z_q,loss
+
+class GQVAE_Class(nn.Module):
+    """
+        Gumbel-Quantized Variational Autoencoder
+    """
+    def __init__(self,
+                 name     = 'GQVAE',
+                 x_dim    = 784,
+                 z_dim    = 2,  # latent sapce dimension 
+                 e_dim    = 2,  # embedding dimension
+                 K        = 10, # size of codebook
+                 h_dims   = [64,32],
+                 beta     = 1e-3,
+                 e_min    = -1.0,
+                 e_max    = +1.0,
+                 tau_max  = 1.0,
+                 tau_min  = 0.01,
+                 actv_enc = nn.ReLU(),
+                 actv_dec = nn.ReLU(),
+                 actv_out = None,
+                 device   = 'cpu'):
+        """
+            Initialize GQ-VAE
+        """
+        super(GQVAE_Class,self).__init__()
+        self.name     = name
+        self.x_dim    = x_dim
+        self.z_dim    = z_dim
+        self.e_dim    = e_dim
+        self.K        = K
+        self.h_dims   = h_dims
+        self.beta     = beta
+        self.e_min    = e_min
+        self.e_max    = e_max
+        self.tau_max  = tau_max
+        self.tau_min  = tau_min
+        self.actv_enc = actv_enc
+        self.actv_dec = actv_dec
+        self.actv_out = actv_out
+        self.device   = device
+        # Initialize layers
+        self.init_layers()
+        self.init_params()
+        # Vector quantization
+        self.GQ = GumbelQuantizerClass(name='GQ',K=self.K,z_dim=self.z_dim,e_dim=self.e_dim,beta=self.beta)
+      
+    def init_layers(self):
+        """
+            Initialize layers
+        """
+        self.layers = {}
+        # Encoder part
+        h_dim_prev = self.x_dim
+        for h_idx,h_dim in enumerate(self.h_dims):
+            self.layers['enc_%02d_lin'%(h_idx)]  = nn.Linear(h_dim_prev,h_dim,bias=True)
+            self.layers['enc_%02d_actv'%(h_idx)] = self.actv_enc
+            h_dim_prev = h_dim
+        self.layers['ze_lin']  = nn.Linear(h_dim_prev,self.z_dim,bias=True)
+        # Decoder part
+        h_dim_prev = self.e_dim
+        for h_idx,h_dim in enumerate(self.h_dims[::-1]):
+            self.layers['dec_%02d_lin'%(h_idx)]  = nn.Linear(h_dim_prev,h_dim,bias=True)
+            self.layers['dec_%02d_actv'%(h_idx)] = self.actv_dec
+            h_dim_prev = h_dim
+        self.layers['out_lin'] = nn.Linear(h_dim_prev,self.x_dim,bias=True)
+        # Append parameters
+        self.param_dict = {}
+        for key in self.layers.keys():
+            layer = self.layers[key]
+            if isinstance(layer,nn.Linear):
+                self.param_dict[key+'_w'] = layer.weight
+                self.param_dict[key+'_b'] = layer.bias
+        self.vae_parameters = nn.ParameterDict(self.param_dict)
+        self.to(self.device)
+        
+    def init_params(self):
+        """
+            Initialize parameters
+        """
+        for key in self.layers.keys():
+            layer = self.layers[key]
+            if isinstance(layer,nn.Linear):
+                nn.init.normal_(layer.weight,mean=0.0,std=0.1)
+                nn.init.zeros_(layer.bias)
+            elif isinstance(layer,nn.BatchNorm2d):
+                nn.init.constant_(layer.weight,1.0)
+                nn.init.constant_(layer.bias,0.0)
+            elif isinstance(layer,nn.Conv2d):
+                nn.init.kaiming_normal_(layer.weight)
+                nn.init.zeros_(layer.bias)
+                
+    def z_e_to_z_code(self,z_e=torch.randn(2,16),tau=1.0,ONE_HOT=False):
+        """
+            'z_e' to 'z_code' using VQ
+        """
+        z_code, _ = self.GQ(z_e=z_e.to(self.device),tau=tau,ONE_HOT=ONE_HOT)
+        return z_code
+    
+    def z_code_to_x_recon(self,z_code=torch.randn(2,16)):
+        """
+            'z_code' to 'x_recon'
+        """
+        net = z_code
+        for h_idx,_ in enumerate(self.h_dims[::-1]):
+            net = self.layers['dec_%02d_lin'%(h_idx)](net)
+            net = self.layers['dec_%02d_actv'%(h_idx)](net)
+        net = self.layers['out_lin'](net)
+        if self.actv_out is not None:
+            net = self.actv_out(net)
+        x_recon = net
+        return x_recon
+    
+    def x_to_z_e(self,x):
+        """
+            'x' to 'z_e'
+        """
+        net = x
+        for h_idx,_ in enumerate(self.h_dims):
+            net = self.layers['enc_%02d_lin'%(h_idx)](net)
+            net = self.layers['enc_%02d_actv'%(h_idx)](net)
+        z_e = self.layers['ze_lin'](net)
+        return z_e
+    
+    def x_to_x_recon(self,x=torch.randn(2,784),tau=1.0,ONE_HOT=False):
+        """
+            'x' to 'x_recon'
+        """
+        z_e     = self.x_to_z_e(x=x)
+        z_code  = self.z_e_to_z_code(z_e,tau=tau,ONE_HOT=ONE_HOT)
+        x_recon = self.z_code_to_x_recon(z_code)
+        return x_recon
+    
+    def sample_x(self,n_sample=5,code_idxs=None):
+        """
+            Sample x
+        """
+        codebook = self.GQ.codebook.weight # [K x e_dim]
+        if code_idxs is None:
+            idxs     = np.random.randint(low=0,high=self.K,size=n_sample)
+            z_sample = codebook[idxs,:]
+        else:
+            z_sample = codebook[code_idxs,:]
+        x_sample = self.z_code_to_x_recon(z_code=z_sample)
+        return x_sample,z_sample
+    
+    def loss_embedding(self,x=torch.randn(2,784)):
+        """
+            VQ loss
+        """
+        z_e = self.x_to_z_e(x)
+        # _,vq_loss = self.VQ(z_e)
+        _,gq_loss = self.GQ(z_e)
+        return gq_loss
+    
+    def loss_recon(self,x=torch.randn(2,784),LOSS_TYPE='L1+L2',recon_loss_gain=1.0,tau=1.0,ONE_HOT=False):
+        """
+            Reconstruction loss
+        """
+        x_recon = self.x_to_x_recon(x=x,tau=tau,ONE_HOT=ONE_HOT)
+        if (LOSS_TYPE == 'L1') or (LOSS_TYPE == 'MAE'):
+            errs = torch.mean(torch.abs(x-x_recon),axis=1)
+        elif (LOSS_TYPE == 'L2') or (LOSS_TYPE == 'MSE'):
+            errs = torch.mean(torch.square(x-x_recon),axis=1)
+        elif (LOSS_TYPE == 'L1+L2') or (LOSS_TYPE == 'EN'):
+            errs = torch.mean(
+                0.5*(torch.abs(x-x_recon)+torch.square(x-x_recon)),axis=1)
+        else:
+            raise Exception("VAE:[%s] Unknown loss_type:[%s]"%
+                            (self.name,LOSS_TYPE))
+        return recon_loss_gain*torch.mean(errs)
+    
+    def loss_total(self,x=torch.randn(2,784),LOSS_TYPE='L1+L2',recon_loss_gain=1.0,tau=1.0,ONE_HOT=False):
+        """
+            Total loss
+        """
+        loss_recon_out     = self.loss_recon(
+            x=x,LOSS_TYPE=LOSS_TYPE,recon_loss_gain=recon_loss_gain,tau=tau,ONE_HOT=ONE_HOT)
+        loss_embedding_out = self.loss_embedding(x=x)
+        loss_total_out     = loss_recon_out + loss_embedding_out
+        info               = {'loss_recon_out'     : loss_recon_out,
+                              'loss_embedding_out' : loss_embedding_out,
+                              'loss_total_out'     : loss_total_out}
+        return loss_total_out,info
+
+def gqvae_mnist_debug(G,x_test_np,y_test_np):
+    """
+        Debug QG-VAE
+    """
+    n_test = x_test_np.shape[0]
+    # Plot test images
+    figsize_recon,n_test_img = (15,1.5),10
+    rand_test_idxs = np.random.permutation(n_test)[:n_test_img]
+    fig = plt.figure(figsize=figsize_recon)
+    for i_idx in range(n_test_img):
+        plt.subplot(1,n_test_img,i_idx+1)
+        plt.imshow(x_test_np[rand_test_idxs[i_idx],:].reshape((28,28)),
+                   vmin=0,vmax=1,cmap='gray'); plt.axis('off')
+    fig.suptitle("Test images",fontsize=15);plt.show()
+    
+    # Plot reconstructed images (stochastic, tau=tau_max)
+    x_test_torch = np2torch(x_test_np)
+    x_recon_np = torch2np(G.x_to_x_recon(x=x_test_torch[rand_test_idxs,:],tau=G.tau_max,ONE_HOT=False))
+    fig = plt.figure(figsize=figsize_recon)
+    for i_idx in range(n_test_img):
+        plt.subplot(1,n_test_img,i_idx+1)
+        plt.imshow(x_recon_np[i_idx,:].reshape((28,28)),
+                   vmin=0,vmax=1,cmap='gray'); plt.axis('off')
+    fig.suptitle("Reconstructed images (stochastic, tau=%.1e)"%(G.tau_max),fontsize=15);plt.show()
+
+    # Plot reconstructed images (stochastic, tau=0.1)
+    x_test_torch = np2torch(x_test_np)
+    x_recon_np = torch2np(G.x_to_x_recon(x=x_test_torch[rand_test_idxs,:],tau=G.tau_min,ONE_HOT=False))
+    fig = plt.figure(figsize=figsize_recon)
+    for i_idx in range(n_test_img):
+        plt.subplot(1,n_test_img,i_idx+1)
+        plt.imshow(x_recon_np[i_idx,:].reshape((28,28)),
+                   vmin=0,vmax=1,cmap='gray'); plt.axis('off')
+    fig.suptitle("Reconstructed images (stochastic, tau=%.1e)"%(G.tau_min),fontsize=15);plt.show()
+
+    # Plot reconstructed images (deterministic)
+    x_test_torch = np2torch(x_test_np)
+    x_recon_np = torch2np(G.x_to_x_recon(x=x_test_torch[rand_test_idxs,:],ONE_HOT=True))
+    fig = plt.figure(figsize=figsize_recon)
+    for i_idx in range(n_test_img):
+        plt.subplot(1,n_test_img,i_idx+1)
+        plt.imshow(x_recon_np[i_idx,:].reshape((28,28)),
+                   vmin=0,vmax=1,cmap='gray'); plt.axis('off')
+    fig.suptitle("Reconstructed images (deterministic)",fontsize=15);plt.show()
+
+    # Plot sampled images
+    figsize_sample,n_sample_img = (15,3),20
+    fig = plt.figure(figsize=figsize_sample)
+    for i_idx in range(n_sample_img):
+        plt.subplot(2,n_sample_img//2,i_idx+1)
+        x_sample_torch,z_sample_torch = G.sample_x(code_idxs=i_idx)
+        x_sample_np = torch2np(x_sample_torch)
+        plt.imshow(x_sample_np.reshape((28,28)),
+                   vmin=0,vmax=1,cmap='gray'); plt.axis('off')
+    fig.suptitle("Sampled images",fontsize=15);plt.show()
+    
+    # Plot latent space
+    figsize_latent = (15,4)
+    tfs = 11
+    fig = plt.figure(figsize=figsize_latent)
+    # Plot codebook
+    codebook_np = torch2np(G.GQ.codebook.weight)
+    plt.subplot(1,5,1)
+    plt.scatter(codebook_np[:,0],codebook_np[:,1],marker='o',s=50,alpha=1.0,edgecolor='k',facecolor='none')
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.title('Codebook',fontsize=tfs)
+    # Plot output of the encoder of the training data (1st and 2nd dimensions)
+    plt.subplot(1,5,2)
+    z_e = G.x_to_z_e(x=x_test_torch)
+    z_e_np = torch2np(z_e)
+    plt.scatter(z_e_np[:,0],z_e_np[:,1],c=y_test_np,marker='.',s=5,alpha=0.5,cmap='rainbow')
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.title('Encoded test data',fontsize=tfs)
+    # Plot the stochastic codebooks of the training data (tau=tau_max)
+    z_code_stochastic_np = torch2np(G.z_e_to_z_code(z_e=z_e,tau=G.tau_max,ONE_HOT=False))
+    plt.subplot(1,5,3)
+    plt.scatter(z_code_stochastic_np[:,0],z_code_stochastic_np[:,1],c=y_test_np,
+                marker='.',s=5,alpha=0.5,cmap='rainbow')
+    plt.scatter(codebook_np[:,0],codebook_np[:,1],marker='o',s=50,alpha=1.0,edgecolor='k',facecolor='none')
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.title('Sto. codes (tau=%.1e)'%(G.tau_max),fontsize=tfs)
+    # Plot the stochastic codebooks of the training data (tau=tau_min)
+    z_code_stochastic_np = torch2np(G.z_e_to_z_code(z_e=z_e,tau=G.tau_min,ONE_HOT=False))
+    plt.subplot(1,5,4)
+    plt.scatter(z_code_stochastic_np[:,0],z_code_stochastic_np[:,1],c=y_test_np,
+                marker='.',s=5,alpha=0.5,cmap='rainbow')
+    plt.scatter(codebook_np[:,0],codebook_np[:,1],marker='o',s=50,alpha=1.0,edgecolor='k',facecolor='none')
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.title('Sto. codes (tau=%.1e)'%(G.tau_min),fontsize=tfs)
+    # Plot the deterministic codebooks of the training data
+    z_code_deterministic = G.z_e_to_z_code(z_e=z_e,ONE_HOT=True)
+    z_code_deterministic_np = torch2np(z_code_deterministic)
+    plt.subplot(1,5,5)
+    plt.scatter(z_code_deterministic_np[:,0],z_code_deterministic_np[:,1],c=y_test_np,
+                marker='o',s=10,alpha=0.5,cmap='rainbow')
+    plt.scatter(codebook_np[:,0],codebook_np[:,1],marker='o',s=50,alpha=1.0,edgecolor='k',facecolor='none')
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.title('Det. codes',fontsize=tfs)
+    plt.show()
+    
